@@ -22,6 +22,8 @@ pub struct RemoteApp {
     error: Option<String>,
     link: Option<Link>,
     selected: Option<MeasId>,
+    shown: Option<MeasId>,
+    fit_spectrum_pending: bool,
     view: ViewState,
     cache: DisplayCache,
     demo: bool,
@@ -56,6 +58,8 @@ impl RemoteApp {
             error,
             link: None,
             selected: None,
+            shown: None,
+            fit_spectrum_pending: false,
             view: {
                 let mut view = ViewState::default();
                 view.spl.mode = ac2_scene::view::SplMode::Meter;
@@ -304,6 +308,7 @@ impl RemoteApp {
         self.link = Some(Link::start(config));
         self.discovery = None;
         self.selected = None;
+        self.shown = None;
         Ok(())
     }
 }
@@ -427,6 +432,15 @@ impl eframe::App for RemoteApp {
             Self::message(ui, rect, "Create measurements on the host");
             return;
         };
+        if self.shown != Some(meas.id) {
+            self.shown = Some(meas.id);
+            self.fit_spectrum_pending = meas.config.kind.publishes_levels();
+        }
+        if self.fit_spectrum_pending
+            && crate::group_panes::fit_spectrum(&snapshot, meas, &mut self.view)
+        {
+            self.fit_spectrum_pending = false;
+        }
         let position = measurements.iter().position(|m| m.id == meas.id).unwrap() + 1;
         let topic = meas.config.kind.stream().map(|stream| Topic::Data {
             meas: meas.id,

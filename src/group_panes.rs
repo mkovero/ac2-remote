@@ -76,6 +76,62 @@ pub fn scale(snapshot: &Snapshot, root: &Measurement) -> Option<LevelScale> {
     )
 }
 
+/// Frame the shown spectrum curves as the desktop's Shift+Home does.
+/// Return false until finite data and its grid have arrived.
+pub fn fit_spectrum(snapshot: &Snapshot, root: &Measurement, view: &mut ViewState) -> bool {
+    if !root.config.kind.publishes_levels() {
+        return false;
+    }
+    let freq = ac2_scene::view::FreqRange::default();
+    let mut values = Vec::new();
+    let mut add = |grid: &ac2_proto::GridDef, levels: &[f32], offset: f64| {
+        values.extend(
+            ac2_scene::grid::column_frequencies(grid)
+                .into_iter()
+                .zip(levels)
+                .filter(|(f, _)| *f >= freq.lo && *f <= freq.hi)
+                .map(|(_, value)| f64::from(*value) + offset),
+        );
+    };
+    for m in snapshot
+        .measurements()
+        .iter()
+        .filter(|m| groups::live(root, m))
+    {
+        if let Some(stream) = m.config.kind.stream()
+            && let Some(frame) = snapshot.latest.get(&Topic::Data { meas: m.id, stream })
+            && let Some(grid) = frame
+                .frame
+                .stamp
+                .grid_id
+                .and_then(|id| snapshot.grids.get(&id))
+        {
+            match &frame.frame.data {
+                FrameData::Spec(data) => add(grid, &data.level, 0.0),
+                FrameData::Rta(data) => add(grid, &data.level, 0.0),
+                _ => {}
+            }
+        }
+    }
+    for trace in snapshot
+        .traces
+        .values()
+        .filter(|t| groups::stored(root, &t.meta))
+    {
+        if let Some(grid) = snapshot.grids.get(&trace.meta.grid_id) {
+            add(grid, &trace.mag_db, trace.meta.edit.offset.0);
+        }
+    }
+    let Some(range) = ac2_scene::view::level::fit(values) else {
+        return false;
+    };
+    view.freq = freq;
+    *view
+        .spectrum
+        .range_mut(scale(snapshot, root).unwrap_or(LevelScale::Dbfs)) = range;
+    true
+}
+
 pub fn scene(
     snapshot: &Snapshot,
     root: &Measurement,
@@ -346,6 +402,7 @@ mod tests {
         data.meta.edit.name = "Slot capture".into();
         data.meta.edit.visible = true;
         let mut hidden = data.clone();
+        hidden.mag_db.fill(500.0);
         hidden.meta.id = ac2_proto::units::TraceId(99);
         hidden.meta.edit.name = "Hidden capture".into();
         hidden.meta.edit.visible = false;
@@ -363,8 +420,33 @@ mod tests {
         for grid in samples::grids() {
             snapshot.grids.insert(grid.id(), Arc::new(grid));
         }
+        let mut fitted = ViewState {
+            freq: ac2_scene::view::FreqRange {
+                lo: 100.0,
+                hi: 1000.0,
+            },
+            ..Default::default()
+        };
+        assert!(!fit_spectrum(&snapshot, &root, &mut fitted));
+        assert_eq!(fitted.freq.lo, 100.0);
         snapshot.traces.insert(data.meta.id, Arc::new(data));
         snapshot.traces.insert(hidden.meta.id, Arc::new(hidden));
+        assert!(fit_spectrum(&snapshot, &root, &mut fitted));
+        assert_eq!(fitted.freq, ac2_scene::view::FreqRange::default());
+        assert!(
+            fitted.spectrum.level.hi < 500.0,
+            "hidden curves must not affect fit"
+        );
+        let range = fitted.spectrum.level;
+        let mut offset_snapshot = snapshot.clone();
+        let trace = offset_snapshot
+            .traces
+            .values_mut()
+            .find(|t| t.meta.edit.visible)
+            .unwrap();
+        Arc::make_mut(trace).meta.edit.offset.0 += 20.0;
+        assert!(fit_spectrum(&offset_snapshot, &root, &mut fitted));
+        assert!(fitted.spectrum.level.lo > range.lo);
         let spectrum = samples::frames()
             .into_iter()
             .find(|f| matches!(f.data, FrameData::Spec(_)))
