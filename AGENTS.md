@@ -1,14 +1,15 @@
 # Repository boundaries
 
-Treat `/home/mui/src/ac2` (`~/src/ac2`) as read-only unless the user and agent
-explicitly discuss and agree on changes there. Working on `ac2-remote`, a general
+Treat `/home/mui/src/ac2` (`~/src/ac2`) as read-only. Working on `ac2-remote`, a general
 instruction to proceed, or a technical dependency on `ac2` does not authorize
 modifying that checkout.
 
-Before proposing changes to `ac2`, inspect its branch, revision, working-tree
-state, and relationship to main, then discuss the intended work with the user.
-Do not edit files, commit, switch branches, rebase, pull, or otherwise update
-`ac2` without that dialogue and agreement. Read-only inspection is allowed.
+Do not edit files, commit, switch branches, rebase, pull, fetch, or otherwise update
+`ac2`. Read-only inspection is allowed. If changes or a dependency refresh are
+needed there, leave a concrete handoff note in `ac2dev.md` in this repository for
+the ac2 developers. Do not request an update to that checkout as the routine path
+to completing remote-viewer work. Only a later explicit user instruction changing
+this boundary can authorize modifications there.
 
 This boundary was explicitly requested after an agent changed and committed
 discovery code in an `ac2` checkout that was 92 commits behind main. The user has
