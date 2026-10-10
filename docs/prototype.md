@@ -4,7 +4,7 @@ This prototype shares ac2's wire protocol, client, scenes and GPU renderer. It s
 hello, state, frequency-grid and stored-trace requests and subscribes to the selected
 measurement group's live streams. Transfer views include owned math and visible stored
 curves; spectrum views combine live FFT/RTA and visible stored spectra/RTA. Sweep measurements
-show their latest visible stored result. Stored trace metadata changes refresh the cache;
+show their latest stored result. Stored trace metadata changes refresh the cache;
 hidden or deleted comparison traces are removed. Sweep results remain available to the
 distortion pane even when hidden as comparison curves, matching the host: prefer the newest
 run of the current sweep measurement, otherwise use the newest stored sweep on the rig. Session,
@@ -12,12 +12,15 @@ measurement and stimulus setup stay in ac2's host application. It does not captu
 
 ## Source and tools
 
-Keep checkouts at `~/src/ac2` and `~/src/ac2-remote`: Cargo uses sibling path dependencies,
-including the desktop plot callback adapter. The tested ac2 revision is
-`5e267e1` (protocol 33; protocol versions must match).
-This revision includes TXT layout 2, which advertises the public server key for pairing.
-Build and run a protocol-matching daemon on the host. Treat the ac2 checkout as read-only;
-updates to it require explicit discussion with the user (see AGENTS.md).
+Cargo dependencies and the desktop plot callback adapter use the read-only pinned
+ac2 checkout at `/work/ac2-pin/684d610`, revision
+`684d610815f9a75841a1ce365036b8882b95bd3b` (protocol 35, daemon session format 20).
+That path must exist to build this repository. For a later target, ac2 developers
+provide a new pinned checkout; update the paths in `Cargo.toml` and `src/lib.rs`
+together. Keep both the pinned checkout and `~/src/ac2` read-only (see AGENTS.md).
+The viewer does not read or write session directories; ac2d handles session format.
+Discovery uses TXT layout 2, which advertises the public server key for pairing.
+Build and run a protocol-matching daemon on the host.
 The path adapter is temporary; an upstream shared renderer crate would remove this
 source-file dependency before release.
 
@@ -136,7 +139,7 @@ times out. The retrying viewer then receives its frame and grid over CURVE, with
 restarting the daemon. Build a protocol-matching daemon and run:
 
 ```sh
-cargo build --locked --manifest-path ../ac2/Cargo.toml -p ac2d --target-dir target/ac2-daemon
+cargo build --locked --manifest-path /work/ac2-pin/684d610/Cargo.toml -p ac2d --target-dir target/ac2-daemon
 AC2D_BIN="$PWD/target/ac2-daemon/debug/ac2d" cargo test --locked --test daemon -- --ignored --nocapture
 ```
 
@@ -166,20 +169,21 @@ The milestone remains open until these device checks pass.
 
 | Check | Result |
 | --- | --- |
-| ARM64 debug APK, API 26 minimum / API 35 target | Built and signed; approximately 72 MB |
+| ARM64 debug APK, API 26 minimum / API 35 target | Built and signed; approximately 79 MiB |
 | APK alignment and both native libraries' ELF alignment | 16 KB checks pass |
 | Native entry point and Internet permission | Present in packaged artifact |
 | ZeroMQ/libsodium dependency | Linked statically; packaged C++ runtime present |
 | Desktop sample plot under Xvfb/Mesa | All three plot sections render; `target/prototype.png` |
 | Viewer integration tests | Frame/grid retrieval, switching, silence, cancellation pass |
-| Real daemon with fake audio | CURVE handshake, live transfer frame and grid pass (protocol 25) |
+| Real daemon with fake audio | CURVE authorization/retry, live transfer frame and grid pass (protocol 35) |
 | No-key-entry authorization | Refused phone key approved live; retry receives frames without daemon restart |
 | mDNS discovery | Public key resolves over loopback UDP; malformed/versioned adverts rejected |
 | Saved pairing | Restart, DHCP change, mismatched fingerprints and replacement keys tested |
 | Clippy, formatting and diff whitespace | Pass |
-| Physical Android device | User confirms discovery, protocol 33 connection, live transfer and button zoom; new gestures await device validation |
+| Physical Android device | User confirmed protocol 33 discovery, connection, transfer, pinch and swipe; protocol 35 awaits device validation |
 
-The installed older ac2d binary was rejected with protocol 14 versus client 25.
-The encrypted test passed after building current source into `target/ac2-daemon`.
-The sibling ac2 checkout now includes the updated discovery advert, daemon publisher,
-discovery test fixtures and protocol documentation. No audio/DSP behavior changed.
+The current encrypted test uses a protocol-35 daemon built from the read-only
+`684d610` pin into `target/ac2-daemon`, with fake audio and temporary state only.
+All 20 regular tests and this opt-in daemon test pass. Protocol-35 physical-phone
+validation remains pending; the earlier physical-device checks used protocol 33.
+Neither ac2 source checkout is changed by the viewer build.

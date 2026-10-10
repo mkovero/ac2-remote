@@ -9,12 +9,12 @@ license = "MIT"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-ac2-client = { path = "../ac2/crates/ac2-client" }
-ac2-proto = { path = "../ac2/crates/ac2-proto" }
-ac2-zmq = { path = "../ac2/crates/ac2-zmq" }
-ac2-scene = { path = "../ac2/crates/ac2-scene" }
-ac2-plot = { path = "../ac2/crates/ac2-plot" }
-ac2-discovery = { path = "../ac2/crates/ac2-discovery" }
+ac2-client = { path = "/work/ac2-pin/684d610/crates/ac2-client" }
+ac2-proto = { path = "/work/ac2-pin/684d610/crates/ac2-proto" }
+ac2-zmq = { path = "/work/ac2-pin/684d610/crates/ac2-zmq" }
+ac2-scene = { path = "/work/ac2-pin/684d610/crates/ac2-scene" }
+ac2-plot = { path = "/work/ac2-pin/684d610/crates/ac2-plot" }
+ac2-discovery = { path = "/work/ac2-pin/684d610/crates/ac2-discovery" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 eframe = { version = "=0.36.2", default-features = false, features = ["default_fonts", "wgpu"] }
@@ -31,7 +31,7 @@ eframe = { version = "=0.36.2", default-features = false, features = ["android-n
 eframe = { version = "=0.36.2", default-features = false, features = ["wayland", "x11"] }
 
 [dev-dependencies]
-ac2-client = { path = "../ac2/crates/ac2-client", features = ["test-support"] }
+ac2-client = { path = "/work/ac2-pin/684d610/crates/ac2-client", features = ["test-support"] }
 tempfile = "3"
 
 [package.metadata.android]

@@ -14,3 +14,12 @@ this boundary can authorize modifications there.
 This boundary was explicitly requested after an agent changed and committed
 discovery code in an `ac2` checkout that was 92 commits behind main. The user has
 their own rebase and deployment process; do not interfere with it.
+
+# Pinned dependencies
+
+The ac2 developer handoff specifies `/work/ac2-pin/684d610` at revision
+`684d610815f9a75841a1ce365036b8882b95bd3b` as the viewer's dependency source
+(protocol 35, daemon session format 20). Treat this pinned checkout as read-only
+too. Cargo paths and the plot adapter include in `src/lib.rs` must target the same
+pin. For a later target, request a new pinned checkout via `ac2dev.md`; do not
+switch back to the moving `~/src/ac2` checkout.

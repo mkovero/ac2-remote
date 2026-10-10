@@ -1,10 +1,11 @@
+use crate::view::ViewState;
 use crate::{groups, link::Snapshot};
 use ac2_proto::{
     FrameData, Topic,
     model::{LevelScale, Measurement, TraceKind},
 };
 use ac2_scene::{
-    Theme, ViewState, Viewport,
+    Theme, Viewport,
     banner::Status,
     spectrum::{Quantity, SpectrumTrace},
     time::Freshness,
@@ -421,9 +422,12 @@ mod tests {
             snapshot.grids.insert(grid.id(), Arc::new(grid));
         }
         let mut fitted = ViewState {
-            freq: ac2_scene::view::FreqRange {
-                lo: 100.0,
-                hi: 1000.0,
+            shared: ac2_scene::ViewState {
+                freq: ac2_scene::view::FreqRange {
+                    lo: 100.0,
+                    hi: 1000.0,
+                },
+                ..Default::default()
             },
             ..Default::default()
         };

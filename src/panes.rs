@@ -1,5 +1,6 @@
+use crate::view::ViewState;
 use ac2_proto::{Frame, FrameData, GridDef, model::TraceData};
-use ac2_scene::{Theme, ViewState, Viewport, banner::Status, time::Freshness, trace::DisplayCache};
+use ac2_scene::{Theme, Viewport, banner::Status, time::Freshness, trace::DisplayCache};
 
 #[allow(clippy::too_many_arguments)]
 pub fn live(
@@ -119,7 +120,7 @@ pub fn sweep(
     size: Viewport,
 ) -> ac2_plot::Scene {
     let theme = Theme::dark();
-    match view.distortion.mode {
+    match view.sweep_mode {
         ac2_scene::view::SweepMode::Room => {
             return ac2_scene::room::room_scene(
                 data.sweep.as_ref().and_then(|s| s.room.as_ref()),

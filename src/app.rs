@@ -1,8 +1,9 @@
+use crate::view::ViewState;
 use crate::{discovery::Discovery, link::Link, pairing::Connection, plot};
 use ac2_client::{ClientConfig, Endpoints, KeyDir, RemoteAddr};
 use ac2_proto::{FrameData, Topic, units::MeasId};
 use ac2_scene::{
-    ViewState, Viewport,
+    Viewport,
     banner::{Status, no_delay_estimate},
     time::Freshness,
     trace::DisplayCache,
@@ -60,11 +61,7 @@ impl RemoteApp {
             selected: None,
             shown: None,
             fit_spectrum_pending: false,
-            view: {
-                let mut view = ViewState::default();
-                view.spl.mode = ac2_scene::view::SplMode::Meter;
-                view
-            },
+            view: ViewState::default(),
             cache: DisplayCache::default(),
             demo,
             discovery: (!demo).then(Discovery::start),

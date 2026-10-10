@@ -24,7 +24,9 @@ at `target/debug/apk/ac2-remote.apk`.
 See [prototype setup and validation](docs/prototype.md) for build, pairing and device checks.
 The user has confirmed discovery, pairing, live transfer, pinch and swipe navigation on
 the phone. The landscape layout and additional measurement views await device validation.
-Automatic pairing requires ac2d with discovery TXT layout 2 and protocol 33.
+The current viewer targets ac2 revision `684d610` (protocol 35, daemon session
+format 20) via the read-only pinned checkout `/work/ac2-pin/684d610`. Automatic
+pairing requires discovery TXT layout 2.
 
 ## Initial scope
 
@@ -57,7 +59,7 @@ Start by investigating reuse of the existing Rust stack:
 
 The current ac2 UI uses egui/eframe with wgpu. Its embedded daemon is optional. eframe exposes Android integration, but that alone does not establish that ac2's UI, rendering, native dependencies, discovery, or filesystem helpers work on Android.
 
-Keep ac2 as the source of truth for protocol and measurement logic. During the prototype, use a pinned ac2 checkout with documented sibling path dependencies. Before releases, choose a reproducible dependency strategy and pin compatible revisions: ac2 currently requires matching protocol versions rather than negotiating compatibility. If reuse needs refactoring, extract shared pane code in ac2 instead of copying large sections into this repository.
+Keep ac2 as the source of truth for protocol and measurement logic. During the prototype, use the documented read-only pinned ac2 checkout for path dependencies and the plot adapter. Before releases, choose a reproducible dependency strategy and pin compatible revisions: ac2 currently requires matching protocol versions rather than negotiating compatibility. If reuse needs refactoring, extract shared pane code in ac2 instead of copying large sections into this repository.
 
 ## High-level implementation steps
 

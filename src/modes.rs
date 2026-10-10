@@ -1,10 +1,11 @@
 use crate::link::Snapshot;
+use crate::view::ViewState;
 use ac2_proto::{
     FrameData, Stream, Topic,
     model::{MeasKind, Measurement},
 };
 use ac2_scene::{
-    Theme, ViewState, Viewport,
+    Theme, Viewport,
     banner::Status,
     spectrograph::{SpectrographFrame, SpectrographHistory},
     time::Freshness,
@@ -15,8 +16,8 @@ pub fn cycle(view: &mut ViewState, kind: &MeasKind) {
         view.spectrum.mode = view.spectrum.mode.next();
     } else {
         match kind {
-            MeasKind::Sweep { .. } => view.distortion.mode = view.distortion.mode.next(),
-            MeasKind::Spl { config } => view.spl.mode = view.spl.mode.next(config.bands.is_some()),
+            MeasKind::Sweep { .. } => view.sweep_mode = view.sweep_mode.next(),
+            MeasKind::Spl { config } => view.spl_mode = view.spl_mode.next(config.bands.is_some()),
             _ => {}
         }
     }
@@ -32,12 +33,12 @@ pub fn name(view: &ViewState, kind: &MeasKind) -> &'static str {
         }
     } else {
         match kind {
-            MeasKind::Sweep { .. } => match view.distortion.mode {
+            MeasKind::Sweep { .. } => match view.sweep_mode {
                 SweepMode::Response => "Response / distortion",
                 SweepMode::Ir => "Impulse response",
                 SweepMode::Room => "Room parameters",
             },
-            MeasKind::Spl { .. } => match view.spl.mode {
+            MeasKind::Spl { .. } => match view.spl_mode {
                 SplMode::Meter => "SPL meter",
                 SplMode::Leq => "Leq windows",
                 SplMode::MeterLeq => "Meter + Leq",
@@ -49,11 +50,11 @@ pub fn name(view: &ViewState, kind: &MeasKind) -> &'static str {
 }
 
 pub fn reset_axes(view: &mut ViewState) {
-    let (spectrum, spl, sweep) = (view.spectrum.mode, view.spl.mode, view.distortion.mode);
+    let (spectrum, spl, sweep) = (view.spectrum.mode, view.spl_mode, view.sweep_mode);
     *view = ViewState::default();
     view.spectrum.mode = spectrum;
-    view.spl.mode = spl;
-    view.distortion.mode = sweep;
+    view.spl_mode = spl;
+    view.sweep_mode = sweep;
 }
 
 pub fn fold_spectrograph(
@@ -115,7 +116,7 @@ pub fn spl(
             held,
         )
     });
-    if view.spl.mode == SplMode::Meter {
+    if view.spl_mode == SplMode::Meter {
         return meter.map(|m| ac2_scene::spl::spl_scene(&m, true, status, &theme, size).scene);
     }
     let stale =
@@ -126,7 +127,7 @@ pub fn spl(
             Freshness::Stale { age_s } => Some(format!("STALE {}", ac2_scene::format::age(age_s))),
             Freshness::AudioStopped { .. } => Some("AUDIO STOPPED".into()),
         };
-    if view.spl.mode == SplMode::Bands {
+    if view.spl_mode == SplMode::Bands {
         let frame = get(Stream::BandLeq)?;
         let FrameData::BandLeq(data) = &frame.frame.data else {
             return None;
@@ -163,6 +164,7 @@ pub fn spl(
             stale: stale(frame),
             scale: data.meta.scale,
             layout: view.spl.layout,
+            chrome: view.chrome,
             run: data
                 .meta
                 .run
@@ -170,7 +172,7 @@ pub fn spl(
             stage: true,
         })
     });
-    match (view.spl.mode, meter, leq) {
+    match (view.spl_mode, meter, leq) {
         (SplMode::MeterLeq, Some(meter), Some(leq)) => Some(
             ac2_scene::meter_leq::meter_leq_scene(&meter, &leq, status, &theme, size)
                 .leq
@@ -215,7 +217,7 @@ mod tests {
             assert_eq!(view.spectrum.mode, mode);
         }
         let spl = samples::spl_measurement();
-        view.spl.mode = SplMode::Meter;
+        view.spl_mode = SplMode::Meter;
         for mode in [
             SplMode::Leq,
             SplMode::MeterLeq,
@@ -223,19 +225,19 @@ mod tests {
             SplMode::Meter,
         ] {
             cycle(&mut view, &spl.config.kind);
-            assert_eq!(view.spl.mode, mode);
+            assert_eq!(view.spl_mode, mode);
         }
         let sweep = samples::sweep_measurement();
         for mode in [SweepMode::Ir, SweepMode::Room, SweepMode::Response] {
             cycle(&mut view, &sweep.config.kind);
-            assert_eq!(view.distortion.mode, mode);
+            assert_eq!(view.sweep_mode, mode);
         }
         cycle(&mut view, &spectrum);
         cycle(&mut view, &sweep.config.kind);
         view.freq = view.freq.zoom(1000.0, 4.0);
         reset_axes(&mut view);
         assert_eq!(view.spectrum.mode, SpectrumMode::Split);
-        assert_eq!(view.distortion.mode, SweepMode::Ir);
+        assert_eq!(view.sweep_mode, SweepMode::Ir);
         assert_eq!(view.freq, ViewState::default().freq);
     }
 
@@ -274,7 +276,7 @@ mod tests {
             SplMode::MeterLeq,
             SplMode::Bands,
         ] {
-            view.spl.mode = mode;
+            view.spl_mode = mode;
             let scene = spl(
                 &snapshot,
                 &root,
@@ -308,9 +310,9 @@ mod tests {
             height: 400.0,
         };
         let response = crate::panes::sweep(&data, grid, &Status::default(), &view, size);
-        view.distortion.mode = SweepMode::Ir;
+        view.sweep_mode = SweepMode::Ir;
         let ir = crate::panes::sweep(&data, grid, &Status::default(), &view, size);
-        view.distortion.mode = SweepMode::Room;
+        view.sweep_mode = SweepMode::Room;
         let room = crate::panes::sweep(&data, grid, &Status::default(), &view, size);
         assert_ne!(response, ir);
         assert_ne!(ir, room);
