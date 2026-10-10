@@ -1,28 +1,51 @@
-# Requests for ac2 developers
+# Handoff to ac2 developers
 
-## Protocol 35 / session format 20 dependency refresh
+## Request: identify the dependency sources matching the deployed daemon
 
-Inspected on 2026-10-10: the sibling checkout at `/home/mui/src/ac2` is still
-`5e267e1` (protocol 33, session format 18). Its cached `origin/main` is `684d610`
-(protocol 35, session format 20). These versions were read from
-`crates/ac2-proto/src/lib.rs::PROTO_VERSION` and
-`crates/ac2-traces/src/session.rs::VERSION`, respectively. No fetch or update of
-the sibling checkout was performed.
+The Android viewer needs updating from protocol 33 to protocol 35. Please confirm
+the ac2 revision the viewer should target and the checkout path to use for its
+shared Rust crates and UI plot adapter. If the intended source is `~/src/ac2`,
+any update of that checkout belongs to the ac2 development process.
 
-Please provide a protocol-35 dependency checkout/revision, or update the sibling
-checkout through the ac2 development process. The remote-viewer agent must leave
-`~/src/ac2` untouched. Once the compatible sources are available, the viewer can
-be adapted, tested, and rebuilt here. The latest rebuilt APK still uses protocol 33.
+No ac2 code change or daemon deployment is requested by this handoff. The known
+protocol and session-format changes have already landed upstream. The remote
+agent must not modify, fetch into, or otherwise update `~/src/ac2`.
 
-The changes include saved transfer impulse responses (`TraceData.ir`,
-`TransferIr`, and `SweepIr` becoming `TraceIr`), per-measurement sweep/transfer
-resolution settings, and unresolved-resolution metadata on frames/sweeps and
-shared trace scenes. Check the viewer's struct literals, fixtures, and shared
-scene calls when the updated dependencies are available. Use the upstream shared
-types and version constant; do not merely change a local version number.
+## Evidence checked on 2026-10-10
 
-The viewer does not load or save session directories; session-format compatibility
-is handled by ac2d. No local session migration is required in ac2-remote. After
-refreshing the sources, run the viewer tests and clippy, rebuild the APK, verify
-its signature and 16 KB alignment, and update the documented compatible revision
-and protocol. Do not advertise protocol-35 APK compatibility until rebuilt.
+- `~/src/ac2` working checkout: `5e267e1`, protocol **33**, session format **18**.
+- Cached `origin/main`: `6137b93`, protocol **35**, session format **20**.
+  Its `STATUS.md` records deployment of `684d610` to pupu, ketunkolo and the Pi.
+  This is the repository's deployment record, not a live check of those daemons.
+- Versions were read from `crates/ac2-proto/src/lib.rs::PROTO_VERSION` and
+  `crates/ac2-traces/src/session.rs::VERSION`. No fetch was performed.
+- The latest APK built by the remote agent uses protocol **33** and cannot
+  connect to a protocol-35 daemon.
+
+`ac2-remote/Cargo.toml` currently uses sibling path dependencies under
+`../ac2/crates/`; `src/lib.rs` also includes `ac2-ui/src/plot.rs` from that sibling.
+Changing the dependency location therefore requires updating both references in
+ac2-remote, rather than just selecting a different Cargo dependency revision.
+
+## Work owned by ac2-remote after the dependency target is established
+
+Adapt the viewer to the shared types and scene APIs from the agreed revision:
+
+- Stored transfer IR: `TraceData.ir`, `TransferIr`, and `SweepIr` renamed to
+  `TraceIr`; check trace fixtures and stored sweep/IR rendering.
+- Transfer/sweep resolution settings and unresolved-resolution metadata: check
+  measurement fixtures and use the shared rendering behavior.
+- Plot chrome API changes: check scene calls and view literals, including the new
+  `LeqView.chrome` field. Compile against the actual revision to find the complete
+  set of required changes; this list is based on source inspection, not a build.
+
+Then run viewer tests and clippy, rebuild and verify the APK (signature and 16 KB
+alignment), update the documented compatible revision/protocol, and confirm a
+connection to a matching daemon. Use the shared protocol constant; changing a
+version number alone is insufficient.
+
+The viewer does not read or write session directories. Session format 20 is
+handled by ac2d; no viewer-side session migration or format bump is required.
+
+The handoff is answered when the target revision and usable source path are
+confirmed. APK compatibility remains a separate ac2-remote validation step.
