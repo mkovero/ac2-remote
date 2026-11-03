@@ -17,9 +17,28 @@ their own rebase and deployment process; do not interfere with it.
 
 # Pinned dependencies
 
-The ac2 developer handoff specifies `/work/ac2-pin/684d610` at revision
-`684d610815f9a75841a1ce365036b8882b95bd3b` as the viewer's dependency source
-(protocol 35, daemon session format 20). Treat this pinned checkout as read-only
-too. Cargo paths and the plot adapter include in `src/lib.rs` must target the same
-pin. For a later target, request a new pinned checkout via `ac2dev.md`; do not
-switch back to the moving `~/src/ac2` checkout.
+The user authorized viewer-owned immutable ac2 source snapshots on 2026-10-13.
+The current dependency target is revision
+`6d5a42758de7bf30b9eab3b5b09fbef859c69666` in
+`.tools/ac2-pins/6d5a4275` (protocol 50, daemon session format 25).
+Cargo paths and the plot adapter include in `src/lib.rs` must use the same
+snapshot. Record its full revision and provenance; never edit a snapshot in place.
+
+For later refreshes, check upstream directly and select a revision compatible
+with the rig's reported protocol. Create a new snapshot under this repository's
+`.tools/ac2-pins` from that verified commit. A separate viewer-owned clone/cache
+may be fetched to obtain source; `~/src/ac2` may only be inspected or read as an
+object source, never fetched into or modified. Existing `/work/ac2-pin` checkouts
+remain read-only. Record the selected target and validation in `ac2dev.md`;
+request an upstream handoff only when the target or required changes are unclear.
+
+# Automatic viewer maintenance
+
+At the start of viewer implementation, debugging, or dependency maintenance,
+follow [docs/upstream-refresh.md](docs/upstream-refresh.md). Check upstream state
+read-only and handle a verified dependency refresh as part of the
+work without waiting for the user to identify version changes or request routine
+adaptations. A status-only or discussion request does not require a rebuild.
+
+This procedure does not authorize changing the upstream ac2 checkout or existing
+`/work/ac2-pin` checkouts, deploying daemons, or installing an APK on a device.

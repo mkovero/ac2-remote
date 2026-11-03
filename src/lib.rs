@@ -11,7 +11,7 @@ mod pairing;
 mod panes;
 mod view;
 // Reuse the desktop GPU adapter directly; extract it into a shared crate upstream later.
-#[path = "/work/ac2-pin/684d610/crates/ac2-ui/src/plot.rs"]
+#[path = "../.tools/ac2-pins/6d5a4275/crates/ac2-ui/src/plot.rs"]
 mod plot;
 
 pub fn run(

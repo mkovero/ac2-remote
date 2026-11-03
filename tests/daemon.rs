@@ -159,6 +159,7 @@ async fn encrypted_daemon_transfer() -> Result<(), Box<dyn std::error::Error>> {
                 .stamp
                 .grid_id
                 .is_some_and(|id| snapshot.grids.contains_key(&id))
+            && snapshot.mirror.as_ref().is_some_and(|m| m.health.is_some())
         {
             assert!(
                 snapshot
@@ -166,7 +167,7 @@ async fn encrypted_daemon_transfer() -> Result<(), Box<dyn std::error::Error>> {
                     .is_some_and(|m| m.synced() && m.responding(Instant::now()))
             );
             eprintln!(
-                "Refused phone authorized without key entry or daemon restart; CURVE frame and grid received"
+                "Refused phone authorized without key entry or daemon restart; CURVE frame, grid and daemon health received"
             );
             break;
         }

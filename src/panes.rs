@@ -131,12 +131,14 @@ pub fn sweep(
             )
             .scene;
         }
-        ac2_scene::view::SweepMode::Ir => {
+        ac2_scene::view::SweepMode::Ir(mode) => {
+            let mut view = *view;
+            view.ir.mode = mode;
             if let Some(scene) = ac2_scene::distortion::sweep_ir_scene(
                 data,
                 theme.traces[0],
                 status,
-                view,
+                &view,
                 &theme,
                 size,
             ) {

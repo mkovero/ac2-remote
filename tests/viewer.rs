@@ -53,6 +53,21 @@ fn viewer_receives_grids_switches_subscription_and_marks_silence_stale() {
         snapshot.latest.get(&topic(1)).is_some() && snapshot.grids.contains_key(&grid.id())
     });
     assert_eq!(daemon.executions("grid.get"), 1);
+    let ir_topic = Topic::Data {
+        meas: MeasId(1),
+        stream: Stream::Ir,
+    };
+    let mut ir = samples::frames()
+        .into_iter()
+        .find(|f| matches!(f.data, FrameData::Ir(_)))
+        .unwrap();
+    let mut ir_seq = 0;
+    until(|| {
+        ir_seq += 1;
+        ir.stamp = daemon.lock().stamp(ir_seq, None);
+        daemon.lock().publish(&ir);
+        link.snapshot().latest.get(&ir_topic).is_some()
+    });
     link.select(Some(MeasId(2)));
     until(|| {
         publish(1);
@@ -130,7 +145,8 @@ fn viewer_switches_between_spectrum_rta_spl_and_math_streams() {
     let spec_kind = MeasKind::Spectrum {
         config: SpectrumConfig {
             input: 0,
-            fft_len: 1024,
+            resolution: ac2_proto::model::SpecResolution::Fixed { fft_len: 1024 },
+            level: ac2_proto::model::SpecLevel::Tone,
             window: ac2_proto::model::Window::Hann,
             averaging: SpecAveraging::Exponential {
                 time_constant: Seconds(1.0),

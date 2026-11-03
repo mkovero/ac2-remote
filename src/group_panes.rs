@@ -64,7 +64,7 @@ pub fn scale(snapshot: &Snapshot, root: &Measurement) -> Option<LevelScale> {
         .values()
         .filter(|t| groups::stored(root, &t.meta))
     {
-        if let TraceKind::Spectrum { scale } | TraceKind::Rta { scale } = trace.meta.kind {
+        if let TraceKind::Spectrum { scale, .. } | TraceKind::Rta { scale } = trace.meta.kind {
             scales.push(scale);
         }
     }
@@ -152,6 +152,44 @@ pub fn scene(
         .map(|s| s.traces.iter().collect())
         .unwrap_or_default();
     let colors = ac2_scene::families::curve_colours(&theme, &refs, &metas);
+    if root.config.kind.publishes_tf() && crate::modes::transfer_ir(view) {
+        let shared = crate::modes::transfer_view(view);
+        let ir = snapshot.latest.get(&Topic::Data {
+            meas: root.id,
+            stream: ac2_proto::Stream::Ir,
+        });
+        let scene = if let Some(frame) = ir.filter(|_| root.running)
+            && let FrameData::Ir(data) = &frame.frame.data
+        {
+            ac2_scene::ir::ir_scene(
+                data,
+                colors.meas(root.id),
+                Some(freshness(snapshot, root, frame)),
+                status,
+                &shared,
+                &shared.ir.axes,
+                shared.chrome,
+                &theme,
+                size,
+            )
+            .scene
+        } else {
+            ac2_scene::ir::missing_scene(
+                if root.running {
+                    format!("{}: no IR frame yet", root.config.name)
+                } else {
+                    format!("{} stopped — start it on the host", root.config.name)
+                },
+                status,
+                &shared.ir.axes,
+                shared.chrome,
+                &theme,
+                size,
+            )
+            .scene
+        };
+        return Some(scene);
+    }
     let mut live = Vec::new();
     for m in measurements.iter().filter(|m| groups::live(root, m)) {
         let stream = m.config.kind.stream()?;
@@ -214,7 +252,15 @@ pub fn scene(
             }),
         );
         return Some(
-            ac2_scene::tf::transfer_scene(&traces, cache, status, view, &theme, size).scene,
+            ac2_scene::tf::transfer_scene(
+                &traces,
+                cache,
+                status,
+                &crate::modes::transfer_view(view),
+                &theme,
+                size,
+            )
+            .scene,
         );
     }
     if root.config.kind.publishes_levels() {
@@ -253,9 +299,9 @@ pub fn scene(
             .collect();
         traces.extend(stored.iter().filter_map(|(data, grid, freqs, edges)| {
             let (scale, quantity) = match data.meta.kind {
-                TraceKind::Spectrum { scale } => (
+                TraceKind::Spectrum { scale, level } => (
                     scale,
-                    Quantity::tone(data.meta.edit.smoothing.map(|s| s.fraction)),
+                    Quantity::narrow(level, data.meta.edit.smoothing.map(|s| s.fraction)),
                 ),
                 TraceKind::Rta { scale } => (scale, Quantity::Band),
                 _ => return None,
@@ -267,6 +313,8 @@ pub fn scene(
                 freqs,
                 edges,
                 level: &data.mag_db,
+                drawn: None,
+                bands: None,
                 validity: None,
                 peak: None,
                 scale,
@@ -353,6 +401,99 @@ mod tests {
     }
 
     #[test]
+    fn density_units_survive_live_stored_and_spectrograph_views() {
+        use ac2_proto::model::SpecLevel;
+        let mut root = samples::state().measurements.remove(0);
+        root.config.kind = MeasKind::Spectrum {
+            config: ac2_proto::model::SpectrumConfig {
+                input: 0,
+                resolution: ac2_proto::model::SpecResolution::Fixed { fft_len: 1024 },
+                level: SpecLevel::Density,
+                window: ac2_proto::model::Window::Hann,
+                averaging: ac2_proto::model::SpecAveraging::Exponential {
+                    time_constant: ac2_proto::units::Seconds(1.0),
+                },
+                smoothing: None,
+            },
+        };
+        let mut state = samples::state();
+        state.measurements = vec![root.clone()];
+        state.traces.clear();
+        let mut mirror = ac2_client::mirror::Mirror::new(true).view();
+        mirror.state = Some(Arc::new(state));
+        let mut snapshot = Snapshot {
+            mirror: Some(Arc::new(mirror)),
+            ..Default::default()
+        };
+        for grid in samples::grids() {
+            snapshot.grids.insert(grid.id(), Arc::new(grid));
+        }
+        let data = samples::replies()
+            .into_iter()
+            .find_map(|r| match r {
+                Ok(ac2_proto::ReplyBody::TraceData(d)) if d.sweep.is_none() => Some(d),
+                _ => None,
+            })
+            .unwrap();
+        let mut data = *data;
+        data.meta.kind = TraceKind::Spectrum {
+            scale: LevelScale::Dbfs,
+            level: SpecLevel::Density,
+        };
+        data.meta.edit.visible = true;
+        let mirror = Arc::make_mut(snapshot.mirror.as_mut().unwrap());
+        Arc::make_mut(mirror.state.as_mut().unwrap()).traces = vec![data.meta.clone()];
+        snapshot.traces.insert(data.meta.id, Arc::new(data));
+        let size = Viewport {
+            width: 1200.0,
+            height: 600.0,
+        };
+        let cache = DisplayCache::default();
+        let mut view = ViewState::default();
+        let render = |snapshot: &Snapshot, view: &ViewState, history| {
+            let rendered = scene(
+                snapshot,
+                &root,
+                &Status::default(),
+                view,
+                &cache,
+                size,
+                history,
+            )
+            .unwrap();
+            assert!(
+                rendered
+                    .layers
+                    .iter()
+                    .flat_map(|l| &l.labels)
+                    .any(|l| { l.text.contains("dBFS/Hz") }),
+                "density must keep its per-hertz unit"
+            );
+            rendered
+        };
+        render(&snapshot, &view, None);
+        snapshot.traces.clear();
+        let mut frame = samples::frames()
+            .into_iter()
+            .find(|f| matches!(f.data, FrameData::Spec(_)))
+            .unwrap();
+        if let FrameData::Spec(f) = &mut frame.data {
+            f.meta.level = SpecLevel::Density;
+            assert!(
+                f.meta.bands.is_some(),
+                "sample covers multi-resolution frames"
+            );
+        }
+        add_frame(&mut snapshot, frame, root.id);
+        render(&snapshot, &view, None);
+        let mut history = ac2_scene::spectrograph::SpectrographHistory::new(30);
+        crate::modes::fold_spectrograph(&snapshot, &root, &mut history);
+        view.spectrum.mode = ac2_scene::view::SpectrumMode::Spectrograph;
+        let rendered = render(&snapshot, &view, Some(&history));
+        assert!(rendered.layers.iter().any(|l| !l.heatmaps.is_empty()));
+    }
+
+    #[test]
     fn spectrum_page_contains_fft_rta_math_and_visible_slots_together() {
         let rta = samples::commands()
             .into_iter()
@@ -370,7 +511,8 @@ mod tests {
         root.config.kind = MeasKind::Spectrum {
             config: ac2_proto::model::SpectrumConfig {
                 input: 0,
-                fft_len: 1024,
+                resolution: ac2_proto::model::SpecResolution::Fixed { fft_len: 1024 },
+                level: ac2_proto::model::SpecLevel::Tone,
                 window: ac2_proto::model::Window::Hann,
                 averaging: ac2_proto::model::SpecAveraging::Exponential {
                     time_constant: ac2_proto::units::Seconds(1.0),
@@ -398,6 +540,7 @@ mod tests {
         let mut data = *data;
         data.meta.kind = TraceKind::Spectrum {
             scale: LevelScale::Dbfs,
+            level: ac2_proto::model::SpecLevel::Tone,
         };
         data.meta.edit.owner = TraceOwner::Meas { meas: root.id };
         data.meta.edit.name = "Slot capture".into();

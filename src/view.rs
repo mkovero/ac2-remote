@@ -6,6 +6,7 @@ use std::ops::{Deref, DerefMut};
 #[derive(Clone, Copy)]
 pub struct ViewState {
     pub shared: ac2_scene::ViewState,
+    pub transfer_mode: ac2_proto::model::layout::TransferView,
     pub spl_mode: SplMode,
     pub sweep_mode: SweepMode,
 }
@@ -14,6 +15,7 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             shared: ac2_scene::ViewState::default(),
+            transfer_mode: ac2_proto::model::layout::TransferView::Magnitude,
             spl_mode: SplMode::Meter,
             sweep_mode: SweepMode::Response,
         }

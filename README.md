@@ -8,14 +8,16 @@ Walk the room with a transfer function, spectrum, or SPL meter in your hand. The
 
 ARM64 Android prototype builds successfully: NativeActivity entry point, automatic mDNS rig discovery,
 fingerprint-confirmed pairing, remembered connection details, encrypted daemon connectivity,
-landscape views for transfer (magnitude, phase and coherence), spectrum, RTA, SPL,
+landscape views for transfer (magnitude, phase, coherence and IR), spectrum, RTA, SPL,
 owned math curves, visible stored traces and the latest stored sweep result. Swipes move
 between top-level measurements; slots and math channels stay within the measurement view.
 The spectrum view combines live FFT/RTA curves and visible stored spectra/RTA traces.
 Measurements fill the screen beneath
 a small caption; swipe left/right to navigate, pinch to zoom, use two fingers to pan,
-tap to cycle the host's G view modes, and double-tap to reset the axes. Back returns to connection setup. A desktop harness
+tap or long-press to cycle the host's G view modes, and double-tap to reset the axes. Back returns to connection setup. A desktop harness
 uses the same application and renderer.
+The view cycle works in both desktop demo and connected plots; transfer cycles through
+magnitude, phase, coherence, linear IR, log IR and ETC.
 
 Desktop rendering, encrypted transfer reception from a real ac2d with fake audio,
 integration tests and APK signature/16 KB alignment checks pass. The debug APK is
@@ -23,10 +25,18 @@ at `target/debug/apk/ac2-remote.apk`.
 
 See [prototype setup and validation](docs/prototype.md) for build, pairing and device checks.
 The user has confirmed discovery, pairing, live transfer, pinch and swipe navigation on
-the phone. The landscape layout and additional measurement views await device validation.
-The current viewer targets ac2 revision `684d610` (protocol 35, daemon session
-format 20) via the read-only pinned checkout `/work/ac2-pin/684d610`. Automatic
-pairing requires discovery TXT layout 2.
+the phone. The user also confirmed that the corrected view cycling looks good on the phone.
+The viewer dependency target is ac2 revision `6d5a4275` (protocol 50, daemon
+session format 25), full revision `6d5a42758de7bf30b9eab3b5b09fbef859c69666`.
+Its read-only viewer-owned source snapshot is `.tools/ac2-pins/6d5a4275`.
+It uses the shared decoder for packed frames and supports multi-resolution spectra
+with tone/density units, including stored spectra and spectrographs. Automatic
+pairing requires discovery TXT layout 2. The protocol-50 APK was rebuilt and verified on
+2026-10-13; the user validated the latest build on the phone, including the
+simplified scan/connect screen.
+Stored-trace visibility follows the host. Hidden live curves are currently a
+desktop-local preference, so the phone can show additional live spectra; the
+shared-visibility handoff is recorded in [ac2dev.md](ac2dev.md).
 
 ## Initial scope
 

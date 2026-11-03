@@ -7,6 +7,11 @@ pub struct Swipe {
 }
 
 impl Swipe {
+    /// Another action consumed this touch; its release must not navigate.
+    pub fn cancel(&mut self) {
+        self.start = None;
+    }
+
     pub fn pinched(&self) -> bool {
         self.pinched
     }

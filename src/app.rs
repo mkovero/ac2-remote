@@ -5,7 +5,6 @@ use ac2_proto::{FrameData, Topic, units::MeasId};
 use ac2_scene::{
     Viewport,
     banner::{Status, no_delay_estimate},
-    time::Freshness,
     trace::DisplayCache,
 };
 use eframe::egui;
@@ -38,6 +37,7 @@ pub struct RemoteApp {
     tap_at: Option<Instant>,
     spectrograph: Option<(MeasId, ac2_scene::spectrograph::SpectrographHistory)>,
 }
+
 impl RemoteApp {
     pub fn new(data_dir: PathBuf, demo: bool) -> Self {
         let keys = KeyDir::new(data_dir.join("keys"));
@@ -79,10 +79,6 @@ impl RemoteApp {
         }
     }
     fn connection_ui(&mut self, ui: &mut egui::Ui) {
-        if ui.button("Preview sample plot").clicked() {
-            self.demo = true;
-            self.discovery = None;
-        }
         ui.heading("Find a rig");
         ui.label("Use the same Wi-Fi/LAN as the daemon host.");
         if ui.button("Scan again").clicked() {
@@ -183,9 +179,12 @@ impl RemoteApp {
         &mut self,
         ui: &mut egui::Ui,
         scale: Option<ac2_proto::model::LevelScale>,
+        kind: Option<&ac2_proto::model::MeasKind>,
     ) -> egui::Rect {
-        let (rect, response) = ui.allocate_exact_size(
-            ui.available_size().max(egui::vec2(1.0, 1.0)),
+        let (_, rect) = ui.allocate_space(ui.available_size().max(egui::vec2(1.0, 1.0)));
+        let response = ui.interact(
+            rect,
+            ui.id().with("measurement-plot"),
             egui::Sense::click_and_drag(),
         );
         self.swipe(ui, &response);
@@ -193,7 +192,11 @@ impl RemoteApp {
         if self.swipe.pinched() || response.dragged() {
             self.tap_at = None;
         }
-        if response.double_clicked() {
+        if response.long_touched() && !self.swipe.pinched() {
+            self.tap_at = None;
+            self.tapped = true;
+            self.swipe.cancel();
+        } else if response.double_clicked() {
             self.tap_at = None;
             crate::modes::reset_axes(&mut self.view);
         } else if response.clicked() && !self.swipe.pinched() {
@@ -238,7 +241,80 @@ impl RemoteApp {
                 .freq
                 .pan(-f64::from(touch.translation_delta.x / rect.width()) * octaves);
         }
+        if let Some(kind) = kind
+            && (self.tapped || ui.input(|i| i.key_pressed(egui::Key::G)))
+        {
+            crate::modes::cycle(&mut self.view, kind);
+        }
         rect
+    }
+    fn measurement_scene(
+        &mut self,
+        snapshot: &crate::link::Snapshot,
+        meas: &ac2_proto::model::Measurement,
+        status: &Status,
+        size: Viewport,
+    ) -> Option<ac2_plot::Scene> {
+        if meas.config.kind.publishes_levels() && self.view.spectrum.mode.spectrograph() {
+            if self
+                .spectrograph
+                .as_ref()
+                .is_none_or(|(id, _)| *id != meas.id)
+            {
+                self.spectrograph = Some((
+                    meas.id,
+                    ac2_scene::spectrograph::SpectrographHistory::new(
+                        self.view.spectrum.spectrograph.span_s,
+                    ),
+                ));
+            }
+            if let Some((_, history)) = &mut self.spectrograph {
+                crate::modes::fold_spectrograph(snapshot, meas, history);
+            }
+        } else {
+            self.spectrograph = None;
+        }
+        let topic = meas.config.kind.stream().map(|stream| Topic::Data {
+            meas: meas.id,
+            stream,
+        });
+        if topic.is_none() {
+            snapshot.sweep.as_ref().and_then(|data| {
+                snapshot
+                    .grids
+                    .get(&data.meta.grid_id)
+                    .map(|grid| crate::panes::sweep(data, grid, status, &self.view, size))
+            })
+        } else if meas.config.kind.publishes_tf() || meas.config.kind.publishes_levels() {
+            crate::group_panes::scene(
+                snapshot,
+                meas,
+                status,
+                &self.view,
+                &self.cache,
+                size,
+                self.spectrograph.as_ref().map(|(_, h)| h),
+            )
+        } else if matches!(meas.config.kind, ac2_proto::model::MeasKind::Spl { .. }) {
+            crate::modes::spl(snapshot, meas, status, &self.view, size, &mut self.spl_hold)
+        } else {
+            topic.and_then(|t| snapshot.latest.get(&t)).and_then(|f| {
+                crate::panes::live(
+                    &f.frame,
+                    f.frame
+                        .stamp
+                        .grid_id
+                        .and_then(|id| snapshot.grids.get(&id).map(AsRef::as_ref)),
+                    &meas.config.name,
+                    crate::group_panes::freshness(snapshot, meas, f),
+                    status,
+                    &self.view,
+                    &self.cache,
+                    size,
+                    &mut self.spl_hold,
+                )
+            })
+        }
     }
     fn message(ui: &egui::Ui, rect: egui::Rect, text: &str) {
         ui.painter().text(
@@ -309,12 +385,93 @@ impl RemoteApp {
         Ok(())
     }
 }
-fn frame_scale(data: &FrameData) -> Option<ac2_proto::model::LevelScale> {
-    match data {
-        FrameData::Spec(f) => Some(f.meta.scale),
-        FrameData::Rta(f) => Some(f.meta.scale),
-        _ => None,
+/// Preview data goes through the same mode selection and scene builders as a rig.
+fn demo_data(index: usize) -> (crate::link::Snapshot, ac2_proto::model::Measurement, usize) {
+    use ac2_proto::{Stream, model::MeasKind, samples};
+    let frames = samples::frames();
+    let pages: Vec<_> = frames
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.data,
+                FrameData::Tf(_) | FrameData::Rta(_) | FrameData::Spec(_) | FrameData::Spl(_)
+            )
+        })
+        .collect();
+    let count = pages.len() + 1;
+    let frame = pages.get(index % count);
+    let mut root = samples::state().measurements.remove(0);
+    match frame.map(|f| &f.data) {
+        Some(FrameData::Tf(f)) => root.id = f.meas,
+        Some(FrameData::Spec(f)) => {
+            root = samples::state()
+                .measurements
+                .into_iter()
+                .find(|m| matches!(m.config.kind, MeasKind::Spectrum { .. }))
+                .unwrap();
+            root.id = f.meas;
+        }
+        Some(FrameData::Rta(f)) => {
+            root.id = f.meas;
+            root.config = samples::commands()
+                .into_iter()
+                .find_map(|c| match c {
+                    ac2_proto::Command::MeasUpdate { config, .. }
+                        if matches!(config.kind, MeasKind::Rta { .. }) =>
+                    {
+                        Some(config)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+        }
+        Some(FrameData::Spl(_)) => root = samples::spl_measurement(),
+        _ => root = samples::sweep_measurement(),
     }
+    root.running = true;
+    let mut state = samples::state();
+    state.measurements = vec![root.clone()];
+    state.traces.clear();
+    let mut mirror = ac2_client::mirror::Mirror::new(true).view();
+    mirror.state = Some(Arc::new(state));
+    mirror.phase = ac2_client::mirror::Phase::Live;
+    mirror.last_ka = Some(Instant::now());
+    let mut snapshot = crate::link::Snapshot {
+        mirror: Some(Arc::new(mirror)),
+        ..Default::default()
+    };
+    for grid in samples::grids() {
+        snapshot.grids.insert(grid.id(), Arc::new(grid));
+    }
+    for frame in frames {
+        let (meas, stream) = match &frame.data {
+            FrameData::Tf(f) => (f.meas, Stream::Tf),
+            FrameData::Ir(f) => (f.meas, Stream::Ir),
+            FrameData::Spec(f) => (f.meas, Stream::Spec),
+            FrameData::Rta(f) => (f.meas, Stream::Rta),
+            FrameData::Spl(f) => (f.meas, Stream::Spl),
+            FrameData::Leq(f) => (f.meas, Stream::Leq),
+            FrameData::BandLeq(f) => (f.meas, Stream::BandLeq),
+            _ => continue,
+        };
+        let topic = Topic::Data { meas, stream };
+        snapshot.latest.frames.insert(
+            topic.to_string().into(),
+            ac2_client::TopicFrame {
+                topic,
+                frame: Arc::new(frame),
+                received: Instant::now(),
+                since_new: Duration::ZERO,
+                age: Some(0.0),
+                stale: false,
+            },
+        );
+    }
+    snapshot.sweep = samples::replies().into_iter().find_map(|r| match r {
+        Ok(ac2_proto::ReplyBody::TraceData(data)) if data.sweep.is_some() => Some(Arc::from(data)),
+        _ => None,
+    });
+    (snapshot, root, count)
 }
 impl eframe::App for RemoteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -328,70 +485,27 @@ impl eframe::App for RemoteApp {
             return;
         }
         if self.demo {
-            let frames: Vec<_> = ac2_proto::samples::frames()
-                .into_iter()
-                .filter(|f| {
-                    matches!(
-                        f.data,
-                        FrameData::Tf(_)
-                            | FrameData::Spec(_)
-                            | FrameData::Rta(_)
-                            | FrameData::Spl(_)
-                    )
-                })
-                .collect();
-            let count = frames.len() + 1;
+            let (snapshot, root, count) = demo_data(self.demo_index);
             self.demo_index %= count;
-            let frame = frames.get(self.demo_index);
-            let name = frame.map_or("Sweep", |f| match &f.data {
-                FrameData::Tf(_) => "Transfer",
-                FrameData::Spec(_) => "Spectrum",
-                FrameData::Rta(_) => "RTA",
-                FrameData::Spl(_) => "SPL",
-                _ => "",
-            });
-            ui.label(format!("DEMO · {} / {count} · {name}", self.demo_index + 1));
-            let rect = self.plot_area(ui, frame.and_then(|f| frame_scale(&f.data)));
-            let size = Viewport {
-                width: rect.width(),
-                height: rect.height(),
-            };
-            let grids = ac2_proto::samples::grids();
-            let scene = if let Some(frame) = frame {
-                let grid = frame
-                    .stamp
-                    .grid_id
-                    .and_then(|id| grids.iter().find(|g| g.id() == id));
-                crate::panes::live(
-                    frame,
-                    grid,
-                    "Sample measurement",
-                    Freshness::Stopped { age_s: 0.0 },
-                    &Status::default(),
-                    &self.view,
-                    &self.cache,
-                    size,
-                    &mut self.spl_hold,
-                )
-            } else {
-                ac2_proto::samples::replies()
-                    .into_iter()
-                    .find_map(|r| match r {
-                        Ok(ac2_proto::ReplyBody::TraceData(data)) if data.sweep.is_some() => grids
-                            .iter()
-                            .find(|g| g.id() == data.meta.grid_id)
-                            .map(|grid| {
-                                crate::panes::sweep(
-                                    &data,
-                                    grid,
-                                    &Status::default(),
-                                    &self.view,
-                                    size,
-                                )
-                            }),
-                        _ => None,
-                    })
-            };
+            ui.label(format!(
+                "DEMO · {} / {count} · {}",
+                self.demo_index + 1,
+                crate::modes::name(&self.view, &root.config.kind)
+            ));
+            let rect = self.plot_area(
+                ui,
+                crate::group_panes::scale(&snapshot, &root),
+                Some(&root.config.kind),
+            );
+            let scene = self.measurement_scene(
+                &snapshot,
+                &root,
+                &Status::default(),
+                Viewport {
+                    width: rect.width(),
+                    height: rect.height(),
+                },
+            );
             if let Some(scene) = scene {
                 plot::paint(ui, plot::PlotSlot(0), rect, Arc::new(scene));
             }
@@ -425,7 +539,7 @@ impl eframe::App for RemoteApp {
             } else {
                 "Connecting / waiting for host authorization"
             });
-            let rect = self.plot_area(ui, None);
+            let rect = self.plot_area(ui, None, None);
             Self::message(ui, rect, "Create measurements on the host");
             return;
         };
@@ -452,13 +566,6 @@ impl eframe::App for RemoteApp {
                 + elapsed
         });
         let stale = !responding || (meas.running && current.is_some_and(|f| f.stale || age > 1.0));
-        let freshness = if stale {
-            Freshness::Stale { age_s: age }
-        } else if !meas.running {
-            Freshness::Stopped { age_s: age }
-        } else {
-            Freshness::Fresh { age_s: age }
-        };
         ui.label(format!(
             "{} · {} · {position}/{} · {}{}",
             meas.config.name,
@@ -475,29 +582,11 @@ impl eframe::App for RemoteApp {
         {
             ui.label(format!("Result: {}", sweep.meta.edit.name));
         }
-        let rect = self.plot_area(ui, crate::group_panes::scale(&snapshot, meas));
-        if self.tapped || ui.input(|i| i.key_pressed(egui::Key::G)) {
-            crate::modes::cycle(&mut self.view, &meas.config.kind);
-        }
-        if meas.config.kind.publishes_levels() && self.view.spectrum.mode.spectrograph() {
-            if self
-                .spectrograph
-                .as_ref()
-                .is_none_or(|(id, _)| *id != meas.id)
-            {
-                self.spectrograph = Some((
-                    meas.id,
-                    ac2_scene::spectrograph::SpectrographHistory::new(
-                        self.view.spectrum.spectrograph.span_s,
-                    ),
-                ));
-            }
-            if let Some((_, history)) = &mut self.spectrograph {
-                crate::modes::fold_spectrograph(&snapshot, meas, history);
-            }
-        } else {
-            self.spectrograph = None;
-        }
+        let rect = self.plot_area(
+            ui,
+            crate::group_panes::scale(&snapshot, meas),
+            Some(&meas.config.kind),
+        );
         let size = Viewport {
             width: rect.width(),
             height: rect.height(),
@@ -535,50 +624,7 @@ impl eframe::App for RemoteApp {
                 .map(|s| ac2_scene::audio::audio_stopped_text(s, daemon_now, |_| 0)),
             ..Default::default()
         };
-        let scene = if topic.is_none() {
-            snapshot.sweep.as_ref().and_then(|data| {
-                snapshot
-                    .grids
-                    .get(&data.meta.grid_id)
-                    .map(|grid| crate::panes::sweep(data, grid, &status, &self.view, size))
-            })
-        } else if meas.config.kind.publishes_tf() || meas.config.kind.publishes_levels() {
-            crate::group_panes::scene(
-                &snapshot,
-                meas,
-                &status,
-                &self.view,
-                &self.cache,
-                size,
-                self.spectrograph.as_ref().map(|(_, h)| h),
-            )
-        } else if matches!(meas.config.kind, ac2_proto::model::MeasKind::Spl { .. }) {
-            crate::modes::spl(
-                &snapshot,
-                meas,
-                &status,
-                &self.view,
-                size,
-                &mut self.spl_hold,
-            )
-        } else {
-            current.and_then(|f| {
-                crate::panes::live(
-                    &f.frame,
-                    f.frame
-                        .stamp
-                        .grid_id
-                        .and_then(|id| snapshot.grids.get(&id).map(AsRef::as_ref)),
-                    &meas.config.name,
-                    freshness,
-                    &status,
-                    &self.view,
-                    &self.cache,
-                    size,
-                    &mut self.spl_hold,
-                )
-            })
-        };
+        let scene = self.measurement_scene(&snapshot, meas, &status, size);
         if let Some(scene) = scene {
             plot::paint(ui, plot::PlotSlot(0), rect, Arc::new(scene));
         } else {
@@ -606,5 +652,214 @@ impl eframe::App for RemoteApp {
             );
         }
         self.step_measurement(&measurements);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, TouchDeviceId, TouchId, TouchPhase, pos2};
+
+    fn touch(id: u64, phase: TouchPhase, x: f32) -> Event {
+        Event::Touch {
+            device_id: TouchDeviceId(0),
+            id: TouchId(id),
+            phase,
+            pos: pos2(x, 100.0),
+            force: None,
+        }
+    }
+
+    fn pointer(x: f32, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: pos2(x, 100.0),
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::default(),
+        }
+    }
+
+    fn frame(app: &mut RemoteApp, ctx: &egui::Context, time: f64, events: Vec<Event>) {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(400.0, 400.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.plot_area(ui, None, None);
+            },
+        );
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn holding_every_measurement_changes_the_rendered_view() {
+        for index in 0..5 {
+            let (snapshot, root, _) = demo_data(index);
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = RemoteApp::new(dir.path().into(), true);
+            let ctx = egui::Context::default();
+            let mut render = |time, events, extra_label| {
+                let mut scene = None;
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(800.0, 600.0),
+                        )),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.label(crate::modes::name(&app.view, &root.config.kind));
+                        if extra_label {
+                            ui.label("Live status changed during the hold");
+                        }
+                        let rect = app.plot_area(
+                            ui,
+                            crate::group_panes::scale(&snapshot, &root),
+                            Some(&root.config.kind),
+                        );
+                        scene = app.measurement_scene(
+                            &snapshot,
+                            &root,
+                            &Status::default(),
+                            Viewport {
+                                width: rect.width(),
+                                height: rect.height(),
+                            },
+                        );
+                    },
+                );
+                output.drop_without_applying_deltas();
+                (
+                    crate::modes::name(&app.view, &root.config.kind),
+                    scene.unwrap(),
+                )
+            };
+            let (before, original) = render(0.0, vec![], false);
+            render(
+                0.1,
+                vec![touch(0, TouchPhase::Start, 300.0), pointer(300.0, true)],
+                false,
+            );
+            // A changed number of widgets above the plot must not steal its hold.
+            render(0.3, vec![], true);
+            let (after, changed) = render(1.0, vec![], false);
+            assert_ne!(before, after, "no mode change for {:?}", root.config.kind);
+            assert_ne!(original, changed, "mode changed without changing the scene");
+            assert_eq!(render(1.5, vec![], false).0, after);
+            assert_eq!(
+                render(
+                    1.6,
+                    vec![
+                        touch(0, TouchPhase::End, 300.0),
+                        pointer(300.0, false),
+                        Event::PointerGone
+                    ],
+                    false
+                )
+                .0,
+                after
+            );
+            let modes = if root.config.kind.publishes_tf() {
+                6
+            } else if root.config.kind.publishes_levels() {
+                3
+            } else if matches!(root.config.kind, ac2_proto::model::MeasKind::Spl { .. }) {
+                4
+            } else {
+                ac2_scene::view::SweepMode::ALL.len()
+            };
+            let mut last = after;
+            for step in 1..modes {
+                let time = 2.0 * step as f64;
+                render(
+                    time,
+                    vec![touch(0, TouchPhase::Start, 300.0), pointer(300.0, true)],
+                    false,
+                );
+                let (next, _) = render(time + 0.9, vec![], false);
+                assert_ne!(last, next, "hold stopped working in {last}");
+                render(
+                    time + 1.0,
+                    vec![
+                        touch(0, TouchPhase::End, 300.0),
+                        pointer(300.0, false),
+                        Event::PointerGone,
+                    ],
+                    false,
+                );
+                last = next;
+            }
+            assert_eq!(last, before, "every mode must cycle back to the start");
+        }
+    }
+
+    #[test]
+    fn long_press_cycles_once_and_consumes_tap_and_swipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = RemoteApp::new(dir.path().into(), true);
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, 0.0, vec![]);
+        frame(
+            &mut app,
+            &ctx,
+            0.1,
+            vec![touch(0, TouchPhase::Start, 300.0), pointer(300.0, true)],
+        );
+        assert!(!app.tapped);
+        frame(&mut app, &ctx, 1.0, vec![]);
+        assert!(app.tapped, "holding the plot must invoke G");
+        assert!(app.tap_at.is_none(), "long press must not queue a tap");
+        frame(&mut app, &ctx, 1.5, vec![]);
+        assert!(!app.tapped, "continuing to hold must not repeat G");
+        frame(
+            &mut app,
+            &ctx,
+            1.6,
+            vec![
+                touch(0, TouchPhase::End, 100.0),
+                pointer(100.0, false),
+                Event::PointerGone,
+            ],
+        );
+        assert!(!app.tapped);
+        assert_eq!(app.measurement_step, 0, "consumed hold must not swipe");
+        assert!(app.tap_at.is_none());
+    }
+
+    #[test]
+    fn pinch_and_drag_do_not_trigger_long_press() {
+        for pinch in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = RemoteApp::new(dir.path().into(), true);
+            let ctx = egui::Context::default();
+            frame(&mut app, &ctx, 0.0, vec![]);
+            frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![touch(0, TouchPhase::Start, 300.0), pointer(300.0, true)],
+            );
+            let events = if pinch {
+                vec![touch(1, TouchPhase::Start, 200.0)]
+            } else {
+                vec![
+                    touch(0, TouchPhase::Move, 200.0),
+                    Event::PointerMoved(pos2(200.0, 100.0)),
+                ]
+            };
+            frame(&mut app, &ctx, 0.2, events);
+            frame(&mut app, &ctx, 1.0, vec![]);
+            assert!(!app.tapped, "pinch/drag must not invoke G");
+            assert!(app.tap_at.is_none());
+        }
     }
 }

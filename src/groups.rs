@@ -52,6 +52,12 @@ pub fn topics(root: &Measurement, measurements: &[Measurement]) -> Vec<Topic> {
                 .map(|stream| Topic::Data { meas: m.id, stream })
         })
         .collect();
+    if root.config.kind.publishes_tf() {
+        topics.push(Topic::Data {
+            meas: root.id,
+            stream: ac2_proto::Stream::Ir,
+        });
+    }
     if let MeasKind::Spl { config } = &root.config.kind {
         topics.push(Topic::Data {
             meas: root.id,
@@ -97,7 +103,7 @@ mod tests {
         let all = vec![root.clone(), child.clone(), other];
         assert_eq!(roots(&all), vec![root.clone()]);
         let wanted = topics(&root, &all);
-        assert_eq!(wanted.len(), 2);
+        assert_eq!(wanted.len(), 3);
         assert!(wanted.contains(&Topic::Data {
             meas: child.id,
             stream: Stream::Tf
